@@ -34,6 +34,22 @@ const DAY = 86400000;
 const app = express();
 app.disable('x-powered-by');
 
+/* ---------------------------------------------------------------------------
+   CORS — hosted frontend (alag origin) se bhi calls bina ruke chalein.
+   Same-origin (frontend isi server par hai) ho to headers sirf extra hain,
+   nuksan nahi karte. OPTIONS (preflight) ka reply yahin 204 ho jata hai.
+   Equivalent to: cors({ origin: '*', ... }) — bina kisi extra dependency.
+--------------------------------------------------------------------------- */
+app.use((req, res, next) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Api-Key');
+  res.set('Access-Control-Expose-Headers', 'Content-Length');
+  res.set('Access-Control-Max-Age', '86400');
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  next();
+});
+
 /* nginx/reverse proxy ke peeche ho to asli client IP chahiye (audit webhook ke liye):
      TRUST_PROXY=1 node server.js        — default OFF (proxy ke bina spoof ho sakta) */
 const tp = String(process.env.TRUST_PROXY || '').toLowerCase();
