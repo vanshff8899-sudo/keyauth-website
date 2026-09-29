@@ -246,6 +246,36 @@ function findProduct(a, req) {
 }
 
 /**
+ * PRODUCT GATE — key sirf apne product par chalega.
+ *   product_id = 0    -> app-wide key (kisi bhi product par chalegi)
+ *   product_id = <id> -> sirf us product par
+ *
+ * Request me product nahi bheja (purana loader) -> chalne do (backward compat).
+ * Request me product bheja -> EXACT match zaroori, warna 403.
+ * Iske bina Internal ki key Silent Aim me bhi activate ho jati thi.
+ */
+function productGate(a, req, k, res) {
+  if (!k || !Number(k.product_id)) return true;               // app-wide key
+  const raw = req.body ? (req.body.product !== undefined ? req.body.product
+    : (req.body.product_id !== undefined ? req.body.product_id : req.body.product_name)) : undefined;
+  if (raw === undefined || raw === null || raw === '') return true;   // loader ne product nahi bheja
+
+  const p = findProduct(a, req);
+  if (p && Number(p.id) === Number(k.product_id)) return true;
+
+  const want = p ? p.name : String(raw);
+  const own  = get('SELECT name FROM products WHERE id = ?', k.product_id);
+  const ownName = own ? own.name : ('#' + k.product_id);
+  log('key', `Product mismatch: key is for "${ownName}", loader asked "${want}"`, req.ip);
+  res.status(403).json({
+    ok: false,
+    code: 'WRONG_PRODUCT',
+    error: `This key is for ${ownName}, not ${want}`
+  });
+  return false;
+}
+
+/**
  * Agar loader ne "Require API secret" on kiya hai to har loader call ke saath
  * `x-api-key: <secret>` header (ya body me `secret`) aana chahiye.
  * Target = product (agar loader ne product bheja) warna loader (app).
@@ -327,13 +357,26 @@ app.post('/api/loader/login', rateLimit(15), (req, res) => {
     String(hwid || ''), req.ip);
   run('UPDATE users SET last_login = ?, last_ip = ? WHERE id = ?', now(), req.ip, u.id);
 
+  /* PRODUCT GATE: sirf us product (ya app-wide) key return ho — warna
+     Internal ki key user ko Silent Aim ka license dikha deti thi */
+  const rawProd = (req.body && (req.body.product !== undefined ? req.body.product
+    : (req.body.product_id !== undefined ? req.body.product_id : req.body.product_name)));
+  const prod = findProduct(a, req);
+  let prodSql = '';
+  const kp = [u.id, a.id, now()];
+  if (rawProd !== undefined && rawProd !== null && rawProd !== '') {
+    prodSql = prod ? 'AND (l.product_id = 0 OR l.product_id = ?)' : 'AND l.product_id = 0';
+    if (prod) kp.push(prod.id);
+  }
+
   const activeKey = get(
     `SELECT l.*, a.name AS app_name FROM licenses l
        JOIN apps a ON a.id = l.app_id
       WHERE l.user_id = ? AND l.app_id = ? AND l.revoked = 0
         AND (l.expires_at = 0 OR l.expires_at > ?)
+        ${prodSql}
       ORDER BY l.expires_at DESC LIMIT 1`,
-    u.id, a.id, now()
+    ...kp
   );
 
   log('login', `${u.username} logged in to ${a.slug}`, req.ip);
@@ -363,6 +406,7 @@ app.post('/api/loader/activate', rateLimit(30), (req, res) => {
   if (k.app_id !== a.id) return bad(res, 'Key belongs to another application');
   if (k.revoked) return bad(res, 'Key revoked');
   if (k.expires_at !== 0 && k.expires_at < now()) return bad(res, 'Key expired');
+  if (!productGate(a, req, k, res)) return;      // Internal ki key Silent Aim me NA chale
 
   const id = String(hwid || (ctx ? ctx.session.hwid : '') || '');
   if (k.user_limit === 1 && k.user_id && (!ctx || k.user_id !== ctx.user.id)) {
@@ -412,8 +456,13 @@ app.post('/api/loader/reset-hwid', rateLimit(10), (req, res) => {
   const key = req.body && req.body.key;
 
   if (ctx) {
-    const n = run('UPDATE licenses SET hwid = ? WHERE app_id = ? AND user_id = ?', '', a.id, ctx.user.id).changes;
-    log('key', `HWID reset by ${ctx.user.username} (${n} key)`, req.ip);
+    /* sirf isi product (+ app-wide) key unbind ho — doosre product ki key safe rahe */
+    const rp = findProduct(a, req);
+    let rsql = 'UPDATE licenses SET hwid = ? WHERE app_id = ? AND user_id = ?';
+    const ra = ['', a.id, ctx.user.id];
+    if (rp) { rsql += ' AND (product_id = 0 OR product_id = ?)'; ra.push(rp.id); }
+    const n = run(rsql, ...ra).changes;
+    log('key', `HWID reset by ${ctx.user.username} (${n} key${rp ? ' / ' + rp.name : ''})`, req.ip);
     return res.json({ ok: true, reset: n });
   }
   if (key) {
