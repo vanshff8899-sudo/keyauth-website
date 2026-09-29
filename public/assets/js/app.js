@@ -16,8 +16,8 @@ const SECTIONS = {
   dashboard: 'Dashboard', loaders: 'Loaders', customers: 'Customers',
   licenses: 'Licenses', logs: 'Activity Log', settings: 'Settings'
 };
-const ADMIN_ONLY = ['loaders', 'logs'];
-const STAFF_ONLY = ['customers'];
+const ADMIN_ONLY = ['loaders', 'logs', 'customers'];
+const STAFF_ONLY = [];
 
 /* ------------------------------------------------ boot */
 (async function init() {
@@ -300,7 +300,7 @@ async function loadDashboard() {
     const acts = [];
     if (S.admin) acts.push('<button class="btn primary" data-go="loaders">⚙ Manage loaders</button>');
     acts.push('<button class="btn primary" data-go="licenses">🔑 Generate keys</button>');
-    acts.push('<button class="btn" data-go="customers">👥 Customers</button>');
+    if (S.admin) acts.push('<button class="btn" data-go="customers">👥 Customers</button>');
     if (S.admin) acts.push('<button class="btn" data-go="logs">🕘 Activity log</button>');
     $('#dash-side').innerHTML = `
       <div class="flex" style="flex-wrap:wrap;gap:9px">${acts.join('')}</div>
@@ -1093,7 +1093,7 @@ function wireGlobal() {
 const PALETTE = () => [
   { i: '▦', t: 'Dashboard', go: () => go('dashboard') },
   { i: '⚙', t: 'Loaders — online / offline / maintenance', admin: 1, go: () => go('loaders') },
-  { i: '👥', t: 'Customers', staff: 1, go: () => go('customers') },
+  { i: '👥', t: 'Customers', admin: 1, go: () => go('customers') },
   { i: '🔑', t: 'Licenses / key generator', go: () => go('licenses') },
   { i: '🕘', t: 'Activity log', admin: 1, go: () => go('logs') },
   { i: '🛠', t: 'Settings', go: () => go('settings') },
